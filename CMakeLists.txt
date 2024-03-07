@@ -6,10 +6,53 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # find dependencies
+find_package(OpenCV REQUIRED)
+
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(std_srvs REQUIRED)
+#find_package(vision_msgs REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(image_geometry REQUIRED)
+#find_package(suas23_interfaces REQUIRED)
+#find_package(suas23_common REQUIRED)
+find_package(suas24_interfaces REQUIRED)
+
+
+add_executable(suas24_localization
+  src/localization.cpp)
+target_link_libraries(suas24_localization
+  ${OpenCV_LIBS})
+target_include_directories(suas24_localization
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  PRIVATE
+    ${OpenCV_INCLUDE_DIRS})
+
+ament_target_dependencies(suas24_localization
+  rclcpp
+  ament_index_cpp
+  std_srvs
+  #vision_msgs
+  sensor_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  image_geometry
+  #suas23_interfaces
+  #suas23_common)
+  suas24_interfaces
+)
+
+install(
+  TARGETS
+    suas24_localization
+  DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
