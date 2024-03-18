@@ -59,7 +59,7 @@ DetectionEstimator::DetectionEstimator()
   this->declare_parameter<std::string>("frame_ground", "local_enu");
   //populate the fields
   this->get_parameter<std::string>("frame_camera", frame_camera);
-  this->get_parameter<std::string>("frame_camera", frame_camera);
+  this->get_parameter<std::string>("frame_ground", frame_ground);
 
   //send drop points of objects
 //   oserv_drop_points = suas23_common::declare_and_get_parameter<std::string>(
@@ -153,8 +153,14 @@ void DetectionEstimator::detections_callback(
     double drone_y = transform_drone_to_ground.transform.translation.y;
     double drone_z = transform_drone_to_ground.transform.translation.z;
 
-    auto cameraVectorCV =
-        camera_model.projectPixelTo3dRay(cv::Point2d(x_cam, y_cam));
+
+    // auto cameraVectorCV =
+    //     camera_model.projectPixelTo3dRay(cv::Point2d(x_cam, y_cam));
+    cv::Point3d cameraVectorCV;
+    cameraVectorCV.x = (x_cam - camera_model.cx() -camera_model.Tx()) / camera_model.fx();
+    cameraVectorCV.y = (y_cam - camera_model.cy() -camera_model.Ty()) / camera_model.fy();
+    cameraVectorCV.z = 1.0f;
+
     geometry_msgs::msg::PointStamped cameraVector;
     cameraVector.point.x =
         drone_z * cameraVectorCV.x;  // Stretch to correct distance
@@ -208,7 +214,7 @@ void DetectionEstimator::detections_callback(
   // points_publisher->publish(central_detection.value());
   if (central_detection.has_value()) {
     RCLCPP_INFO(this->get_logger(), "Publishing localization points");
-    //points_publisher->publish(central_detection.value());
+    points_publisher->publish(central_detection.value());
   }
 }
 
