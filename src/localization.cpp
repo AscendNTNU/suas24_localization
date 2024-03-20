@@ -14,11 +14,15 @@
 #include "localization.h"
 
 #include <cstdint>
+#include <opencv2/highgui.hpp>
+#include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
 #include <string>
+#include <array>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <array>
 #include <optional>
+#include <std_msgs/msg/int32_multi_array.hpp>
 
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
@@ -72,6 +76,8 @@ DetectionEstimator::DetectionEstimator()
       oserv_drop_points,
       std::bind(&DetectionEstimator::drop_points_callback, this,
                 std::placeholders::_1, std::placeholders::_2));
+  
+
 
   //publish local-ENU coordinates
 //   otopic_points = suas23_common::declare_and_get_parameter<std::string>(
@@ -80,6 +86,7 @@ DetectionEstimator::DetectionEstimator()
   this->get_parameter<std::string>("otopic_points", otopic_points);
   points_publisher =
       create_publisher<geometry_msgs::msg::PointStamped>(otopic_points, 10); //publisher local-ENU
+  visualization_points_publisher = create_publisher<std_msgs::msg::Int32MultiArray>("/viz/points", 10);
 
 //   itopic_classifications = suas23_common::declare_and_get_parameter<std::string>(
 //       this, "itopic_detections", "/perception/classifications");
@@ -90,7 +97,7 @@ DetectionEstimator::DetectionEstimator()
 //       this, "spatial_resolution", 0.1);
 //   confidence_threshold = suas23_common::declare_and_get_parameter<float>(
 //       this, "confidence_threshold", 0.0);
-  this->declare_parameter<float>("spatial_resolution", 0.1);
+  this->declare_parameter<float>("spatial_resolution", 0.01);
   this->declare_parameter<float>("confidence_threshold", 0.0);
   this->get_parameter<float>("spatial_resolution", spatial_resolution);
   this->get_parameter<float>("confidence_threshold", confidence_threshold);
@@ -104,6 +111,7 @@ DetectionEstimator::DetectionEstimator()
       itopic_camera_info, 10,
       std::bind(&DetectionEstimator::camera_info_callback, this,
                 std::placeholders::_1));
+
 
   //debug = suas23_common::declare_and_get_parameter<bool>(this, "debug", false);
   debug = true;
@@ -195,6 +203,17 @@ void DetectionEstimator::detections_callback(
            static_cast<float>(cameraVectorGround.point.y),
            static_cast<float>(cameraVectorGround.point.z),
            static_cast<float>(score)});
+
+      auto viz_array_msg = std_msgs::msg::Int32MultiArray();
+      std::vector<int> viz_vector {
+      i,
+      static_cast<int>(cameraVectorGround.point.x*100),
+      static_cast<int>(cameraVectorGround.point.y*100),
+      static_cast<int>(cameraVectorGround.point.z*100),
+      static_cast<int>(score*100),};
+      viz_array_msg.data = viz_vector;
+      visualization_points_publisher->publish(viz_array_msg);
+      RCLCPP_INFO(this->get_logger(), "BRUHMOMENT");
     }
 
     if (over_threshold) {
@@ -212,6 +231,8 @@ void DetectionEstimator::detections_callback(
                 cameraVectorGround.point.x, cameraVectorGround.point.y,
                 cameraVectorGround.point.z); //local ENU coords
   }
+
+  
 
   // points_publisher->publish(central_detection.value());
   if (central_detection.has_value()) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "std_msgs/msg/string.hpp"
+#include <std_msgs/msg/int32_multi_array.hpp>
 //#include "suas23_common/suas23_common.hpp"
 //#include "suas23_interfaces/srv/drop_point_info.hpp"
 #include "tf2_ros/buffer.h"
@@ -45,6 +47,8 @@ class DetectionEstimator : public rclcpp::Node {
   std::string otopic_points;
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr
       points_publisher;
+    
+  rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr visualization_points_publisher;
 
   // Subscribers
   std::string itopic_classifications, itopic_camera_info;
