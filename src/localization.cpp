@@ -13,6 +13,8 @@
 
 #include "localization.h"
 
+#include <cstdint>
+#include <string>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <array>
@@ -104,7 +106,7 @@ DetectionEstimator::DetectionEstimator()
                 std::placeholders::_1));
 
   //debug = suas23_common::declare_and_get_parameter<bool>(this, "debug", false);
-  debug = false;
+  debug = true;
 
   // The kernel size is an odd value corresponding to 5 meters on the ground
   const int kernel_size = std::round(5.0 / spatial_resolution);
@@ -281,7 +283,7 @@ DropPointImage DetectionEstimator::get_drop_point_image(
   width = std::max(width, 1);
   height = std::max(height, 1);
 
-  cv::Mat img = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat img = cv::Mat::zeros(height, width, CV_8UC1);
 
   RCLCPP_INFO(this->get_logger(), "Initializing matrix for %s: %i x %i",
               object_id.c_str(), width, height);
@@ -289,16 +291,18 @@ DropPointImage DetectionEstimator::get_drop_point_image(
   for (const auto& detection : detection_points.at(object_index)) {
     const int x_img = (detection.x - x_min) / spatial_resolution;
     const int y_img = (detection.y - y_min) / spatial_resolution;
+    //TODO check row col
+    img.at<uint>(x_img, y_img) = 255;
   }
 
   cv::Mat img_filtered(height, width, CV_32F);
   cv::sepFilter2D(img, img_filtered, -1, kernel, kernel);
 
   if (debug) {
-    save_debug_image(img_filtered, "droppoint_" + object_id + ".png");
+    save_debug_image(img_filtered, "droppoint_" + object_id + std::to_string(object_index) + ".png");
   }
 
-  return {img_filtered, x_min, y_min};
+  return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
 }
 
 cv::Point3f DetectionEstimator::get_drop_point(const int object_index) {
