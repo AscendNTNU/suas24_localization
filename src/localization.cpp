@@ -172,8 +172,7 @@ void DetectionEstimator::detections_callback(
     cameraVectorCV.z = 1.0f;
 
     geometry_msgs::msg::PointStamped cameraVector;
-    cameraVector.point.x =
-        drone_z * cameraVectorCV.x;  // Stretch to correct distance
+    cameraVector.point.x = drone_z * cameraVectorCV.x;  // Stretch to correct distance
     cameraVector.point.y = drone_z * cameraVectorCV.y;
     cameraVector.point.z = drone_z * cameraVectorCV.z;
     cameraVector.header.stamp = detection->header.stamp;
@@ -207,9 +206,9 @@ void DetectionEstimator::detections_callback(
       auto viz_array_msg = std_msgs::msg::Int32MultiArray();
       std::vector<int> viz_vector {
       i,
-      static_cast<int>(cameraVectorGround.point.x*100),
-      static_cast<int>(cameraVectorGround.point.y*100),
-      static_cast<int>(cameraVectorGround.point.z*100),
+      static_cast<int>(cameraVectorGround.point.x*10),
+      static_cast<int>(cameraVectorGround.point.y*10),
+      static_cast<int>(cameraVectorGround.point.z*10),
       static_cast<int>(score*100),};
       viz_array_msg.data = viz_vector;
       visualization_points_publisher->publish(viz_array_msg);
