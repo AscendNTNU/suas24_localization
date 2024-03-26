@@ -1,8 +1,12 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <opencv2/core/mat.hpp>
+#include <rclcpp/timer.hpp>
+#include <sensor_msgs/msg/detail/image__struct.hpp>
 #include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
 #include <string>
+#include <suas24_interfaces/msg/detail/visualization_imgs__struct.hpp>
 #include <vector>
 
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -23,6 +27,7 @@
 #include <suas24_interfaces/msg/detail/classification__struct.hpp>
 
 #include <suas24_interfaces/srv/detail/drop_point_info__struct.hpp>
+#include <suas24_interfaces/msg/visualization_imgs.hpp>
 
 //#include "vision_msgs/msg/detection2_d_array.hpp"
 
@@ -49,6 +54,11 @@ class DetectionEstimator : public rclcpp::Node {
       points_publisher;
     
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr visualization_points_publisher;
+  
+
+  rclcpp::Publisher<suas24_interfaces::msg::VisualizationImgs>::SharedPtr visualization_heatmap_publisher;
+  rclcpp::TimerBase::SharedPtr timer_;
+  void visualization_callback();
 
   // Subscribers
   std::string itopic_classifications, itopic_camera_info;
@@ -94,4 +104,9 @@ class DetectionEstimator : public rclcpp::Node {
   //std::vector<suas23_common::StandardObject> standard_objects;
 
   bool debug;
+
+
+
+  //refactor
+  sensor_msgs::msg::Image cv_mat_to_ros(const cv::Mat& mat);
 };

@@ -13,11 +13,15 @@
 
 #include "localization.h"
 
+#include <chrono>
+#include <string>
 #include <cstdint>
 #include <opencv2/highgui.hpp>
+#include <sensor_msgs/msg/detail/image__struct.hpp>
 #include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
 #include <string>
 #include <array>
+#include <suas24_interfaces/msg/detail/visualization_imgs__struct.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <array>
@@ -31,7 +35,7 @@
 //#include <suas24_interfaces/msg/detail/classification__struct.hpp>
 #include <suas24_interfaces/msg/classification.hpp>
 #include <suas24_interfaces/srv/detail/drop_point_info__struct.hpp>
-
+#include <suas24_interfaces/msg/visualization_imgs.hpp>
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
@@ -112,9 +116,14 @@ DetectionEstimator::DetectionEstimator()
       std::bind(&DetectionEstimator::camera_info_callback, this,
                 std::placeholders::_1));
 
-
-  //debug = suas23_common::declare_and_get_parameter<bool>(this, "debug", false);
   debug = true;
+  
+  //publishes visualization heatmap for debugging
+  bool debug_heatmap = true;
+  if(debug_heatmap == true){ //rework this
+    visualization_heatmap_publisher = create_publisher<suas24_interfaces::msg::VisualizationImgs>("/viz/heatmap", 10);
+    timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&DetectionEstimator::visualization_callback, this));
+  }
 
   // The kernel size is an odd value corresponding to 5 meters on the ground
   const int kernel_size = std::round(5.0 / spatial_resolution);
@@ -122,6 +131,27 @@ DetectionEstimator::DetectionEstimator()
       cv::getGaussianKernel(kernel_size + (1 - kernel_size % 2), 0, CV_32F);
 }
 
+
+void DetectionEstimator::visualization_callback(){
+  
+  if (!detection_points.at(0).empty()){ //dont publish until we have detection points
+    suas24_interfaces::msg::VisualizationImgs viz_msg;
+    std::vector<sensor_msgs::msg::Image> imgs;
+
+    //append each objects heatmap image to the message 
+    for (int i = 0; i < 5; i++) { 
+      DropPointImage img_struct = get_drop_point_image(i);
+      cv::Mat img = img_struct.image;
+
+      sensor_msgs::msg::Image sensor_img = cv_mat_to_ros(img);
+      imgs.push_back(sensor_img); 
+    }
+
+    viz_msg.images = imgs;
+    visualization_heatmap_publisher->publish(viz_msg);
+    RCLCPP_INFO(this->get_logger(), "Published viz");
+  }
+}
 
 void DetectionEstimator::detections_callback(
     //vision_msgs::msg::Detection2DArray::ConstSharedPtr msg) {
@@ -137,7 +167,7 @@ void DetectionEstimator::detections_callback(
   float central_detection_deviation;
   std::vector<suas24_interfaces::msg::Classification::ConstSharedPtr> detections;
   detections.push_back(msg);
-  for (auto detection : detections/*msg->detections*/) { //HMMMMM
+  for (auto detection : detections/*msg->detections*/) { 
     geometry_msgs::msg::TransformStamped transform_drone_to_ground;
     geometry_msgs::msg::TransformStamped transform_ground_to_drone;
 
@@ -195,7 +225,7 @@ void DetectionEstimator::detections_callback(
       if (score < confidence_threshold) {
         continue;
       }
-      over_threshold = true;
+      over_threshold = true; 
 
       detection_points.at(i).push_back(
           {static_cast<float>(cameraVectorGround.point.x),
@@ -203,16 +233,19 @@ void DetectionEstimator::detections_callback(
            static_cast<float>(cameraVectorGround.point.z),
            static_cast<float>(score)});
 
-      auto viz_array_msg = std_msgs::msg::Int32MultiArray();
-      std::vector<int> viz_vector {
-      i,
-      static_cast<int>(cameraVectorGround.point.x*10),
-      static_cast<int>(cameraVectorGround.point.y*10),
-      static_cast<int>(cameraVectorGround.point.z*10),
-      static_cast<int>(score*100),};
-      viz_array_msg.data = viz_vector;
-      visualization_points_publisher->publish(viz_array_msg);
-      RCLCPP_INFO(this->get_logger(), "BRUHMOMENT");
+      // if (debug){
+      //   auto viz_array_msg = std_msgs::msg::Int32MultiArray();
+      //   std::vector<int> viz_vector {
+      //   i,
+      //   static_cast<int>(cameraVectorGround.point.x*10),
+      //   static_cast<int>(cameraVectorGround.point.y*10),
+      //   static_cast<int>(cameraVectorGround.point.z*10),
+      //   static_cast<int>(score*100),};
+      //   viz_array_msg.data = viz_vector;
+      //   visualization_points_publisher->publish(viz_array_msg);
+      //   RCLCPP_INFO(this->get_logger(), "BRUHMOMENT");
+      // }
+      
     }
 
     if (over_threshold) {
@@ -231,7 +264,6 @@ void DetectionEstimator::detections_callback(
                 cameraVectorGround.point.z); //local ENU coords
   }
 
-  
 
   // points_publisher->publish(central_detection.value());
   if (central_detection.has_value()) {
@@ -255,17 +287,19 @@ void DetectionEstimator::camera_info_callback(
                     std::placeholders::_1));
 }
 
+
+
 DropPointImage DetectionEstimator::get_drop_point_image(
     const int object_index) {
   //if (object_index >= standard_objects.size() + 1) {
     if (object_index >= 5) {
-    RCLCPP_ERROR(this->get_logger(), "Object index out of range");
-    return {
-        cv::Mat::zeros(1, 1, CV_32F),
-        0,
-        0,
-    };
-  }
+      RCLCPP_ERROR(this->get_logger(), "Object index out of range");
+      return {
+          cv::Mat::zeros(1, 1, CV_32F),
+          0,
+          0,
+      };
+    }
 
   const std::string object_id =
       //(object_index >= standard_objects.size())
@@ -305,14 +339,15 @@ DropPointImage DetectionEstimator::get_drop_point_image(
 
   cv::Mat img = cv::Mat::zeros(height, width, CV_8UC1);
 
-  RCLCPP_INFO(this->get_logger(), "Initializing matrix for %s: %i x %i",
-              object_id.c_str(), width, height);
+  // RCLCPP_INFO(this->get_logger(), "Initializing matrix for %s: %i x %i",
+  //             object_id.c_str(), width, height);
 
   for (const auto& detection : detection_points.at(object_index)) {
     const int x_img = (detection.x - x_min) / spatial_resolution;
     const int y_img = (detection.y - y_min) / spatial_resolution;
     //TODO check row col
-    img.at<uint>(x_img, y_img) = 255;
+    img.at<float>(y_img, x_img) = 255; //y_img is rows, x_img is cols //TODO: Increment based off global_confidence instead of 255
+    //RCLCPP_INFO(this->get_logger(), "x, y: %s , %s", std::to_string(x_img).c_str(), std::to_string(y_img).c_str()); //checks out
   }
 
   cv::Mat img_filtered(height, width, CV_32F);
@@ -322,9 +357,17 @@ DropPointImage DetectionEstimator::get_drop_point_image(
     save_debug_image(img_filtered, "droppoint_" + object_id + std::to_string(object_index) + ".png");
   }
 
-  return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
+  //return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
+  return {img, static_cast<int>(x_min), static_cast<int>(y_min)}; //drop the gaussian filter for now
 }
 
+
+
+
+
+/***************************************************************************************************************************************
+* Calculates the most probable location for each object based of their respective detection maps and returns this coordinate (local-enu)
+*/
 cv::Point3f DetectionEstimator::get_drop_point(const int object_index) {
 //   if (object_index >= standard_objects.size() + 1) {
     if (object_index >= 5) {
@@ -389,6 +432,10 @@ void DetectionEstimator::drop_points_callback(
   resp->success = success;
 }
 
+
+/**
+* Saves a heatmap image of the current detection map
+*/
 void DetectionEstimator::save_debug_image(cv::Mat image_f32,
                                           const std::string& name) {
   double min_val, max_val;
@@ -399,4 +446,37 @@ void DetectionEstimator::save_debug_image(cv::Mat image_f32,
                       -min_val * 255.0 / (max_val - min_val));
 
   cv::imwrite(name, image_u8);
+}
+
+
+
+
+
+//Refactor:
+
+
+sensor_msgs::msg::Image
+DetectionEstimator::cv_mat_to_ros(const cv::Mat& mat) {
+    sensor_msgs::msg::Image ros_img;
+
+    ros_img.width = mat.cols;
+    ros_img.height = mat.rows;
+
+    ros_img.encoding = "bgr8";
+
+    ros_img.is_bigendian = false;
+
+    ros_img.header = std_msgs::msg::Header();
+
+    ros_img.step = ros_img.width * mat.elemSize();
+
+    size_t size = ros_img.step * ros_img.height;
+    ros_img.data.resize(size);
+
+    uchar *ros_data_ptr = reinterpret_cast<uchar *>(&ros_img.data[0]);
+    uchar *cv_data_ptr = mat.data;
+
+    memcpy(ros_data_ptr, cv_data_ptr, size);
+
+    return ros_img;
 }
