@@ -2,11 +2,13 @@
 #include <map>
 #include <memory>
 #include <opencv2/core/mat.hpp>
+#include <rclcpp/service.hpp>
 #include <rclcpp/timer.hpp>
 #include <sensor_msgs/msg/detail/image__struct.hpp>
 #include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
 #include <string>
 #include <suas24_interfaces/msg/detail/visualization_imgs__struct.hpp>
+#include <suas24_interfaces/srv/detail/debug__struct.hpp>
 #include <vector>
 
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -28,7 +30,7 @@
 
 #include <suas24_interfaces/srv/detail/drop_point_info__struct.hpp>
 #include <suas24_interfaces/msg/visualization_imgs.hpp>
-
+#include <suas24_interfaces/srv/debug.hpp>
 //#include "vision_msgs/msg/detection2_d_array.hpp"
 
 // TODO - MAVROS position
@@ -46,6 +48,7 @@ struct DropPointImage {
 class DetectionEstimator : public rclcpp::Node {
  public:
   DetectionEstimator();
+  
 
  private:
   // Publishers
@@ -103,7 +106,15 @@ class DetectionEstimator : public rclcpp::Node {
   // Standard objects
   //std::vector<suas23_common::StandardObject> standard_objects;
 
+
+  //debug shit
   bool debug;
+  std::string debug_string;
+  rclcpp::Service<suas24_interfaces::srv::Debug>::SharedPtr debug_service; 
+  void debug_callback(
+    suas24_interfaces::srv::Debug::Request::SharedPtr req,
+    suas24_interfaces::srv::Debug::Response::SharedPtr res
+  );
 
 
 

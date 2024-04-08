@@ -13,20 +13,14 @@
 
 #include "localization.h"
 
-#include <chrono>
-#include <string>
 #include <cstdint>
-#include <opencv2/highgui.hpp>
-#include <sensor_msgs/msg/detail/image__struct.hpp>
-#include <std_msgs/msg/detail/int32_multi_array__struct.hpp>
+#include <std_msgs/msg/detail/string__struct.hpp>
 #include <string>
-#include <array>
-#include <suas24_interfaces/msg/detail/visualization_imgs__struct.hpp>
+#include <suas24_interfaces/srv/detail/debug__struct.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <array>
 #include <optional>
-#include <std_msgs/msg/int32_multi_array.hpp>
 
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
@@ -35,7 +29,8 @@
 //#include <suas24_interfaces/msg/detail/classification__struct.hpp>
 #include <suas24_interfaces/msg/classification.hpp>
 #include <suas24_interfaces/srv/detail/drop_point_info__struct.hpp>
-#include <suas24_interfaces/msg/visualization_imgs.hpp>
+#include <suas24_interfaces/srv/debug.hpp>
+
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
@@ -50,21 +45,8 @@ DetectionEstimator::DetectionEstimator()
   tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener = std::make_unique<tf2_ros::TransformListener>(*tf_buffer);
 
-  // Hardcode standard_object parameter
-//   this->declare_parameter<std::vector<std::string>>(
-//       "standard_objects",
-//       {"circle         red   E blue", "trapezoid      red   H black",
-//        "quarter_circle blue  F white", "rectangle      black 8 white",
-//        "semicircle     red   O yellow"});
-
-  //standard_objects = suas23_common::get_standard_objects(this);
-  //detection_points.resize(standard_objects.size() + 1); // std::vector<std::vector<DetectionLocation>>
   detection_points.resize(5); //must correspond to size of 'confidence' in suas24_interfaces::msg::Classification
 
-//   frame_camera = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "frame_camera", "camera");
-//   frame_ground = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "frame_ground", "local_enu");
   this->declare_parameter<std::string>("frame_camera", "camera");
   this->declare_parameter<std::string>("frame_ground", "local_enu");
   //populate the fields
@@ -72,43 +54,34 @@ DetectionEstimator::DetectionEstimator()
   this->get_parameter<std::string>("frame_ground", frame_ground);
 
   //send drop points of objects
-//   oserv_drop_points = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "oserv_drop_points", "~/drop_points");
   this->declare_parameter<std::string>("oserv_drop_points", "~/drop_points");
   this->get_parameter<std::string>("oserv_drop_points", oserv_drop_points);
   drop_points_service = create_service<suas24_interfaces::srv::DropPointInfo>(
       oserv_drop_points,
       std::bind(&DetectionEstimator::drop_points_callback, this,
                 std::placeholders::_1, std::placeholders::_2));
-  
 
+  debug_service = create_service<suas24_interfaces::srv::Debug>(
+    "debug_service",
+    std::bind(&DetectionEstimator::debug_callback, this,
+              std::placeholders::_1, std::placeholders::_2)
+  );
 
   //publish local-ENU coordinates
-//   otopic_points = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "otopic_points", "/perception/object_position");
   this->declare_parameter<std::string>("otopic_points", "/perception/object_position");
   this->get_parameter<std::string>("otopic_points", otopic_points);
   points_publisher =
       create_publisher<geometry_msgs::msg::PointStamped>(otopic_points, 10); //publisher local-ENU
-  visualization_points_publisher = create_publisher<std_msgs::msg::Int32MultiArray>("/viz/points", 10);
 
-//   itopic_classifications = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "itopic_detections", "/perception/classifications");
   this->declare_parameter<std::string>("itopic_classifications", "/classification");
   this->get_parameter<std::string>("itopic_classifications", itopic_classifications);
 
-//   spatial_resolution = suas23_common::declare_and_get_parameter<float>(
-//       this, "spatial_resolution", 0.1);
-//   confidence_threshold = suas23_common::declare_and_get_parameter<float>(
-//       this, "confidence_threshold", 0.0);
-  this->declare_parameter<float>("spatial_resolution", 0.01);
+  this->declare_parameter<float>("spatial_resolution", 0.1);
   this->declare_parameter<float>("confidence_threshold", 0.0);
   this->get_parameter<float>("spatial_resolution", spatial_resolution);
   this->get_parameter<float>("confidence_threshold", confidence_threshold);
 
   //get intrinsic camera parameters
-//   itopic_camera_info = suas23_common::declare_and_get_parameter<std::string>(
-//       this, "itopic_camera_info", "/perception/camera_info");
   this->declare_parameter<std::string>("itopic_camera_info", "/perception/camera_info");
   this->get_parameter<std::string>("itopic_camera_info", itopic_camera_info);
   camera_info_subscriber = create_subscription<sensor_msgs::msg::CameraInfo>(
@@ -117,8 +90,9 @@ DetectionEstimator::DetectionEstimator()
                 std::placeholders::_1));
 
   debug = true;
-  
-  //publishes visualization heatmap for debugging
+
+
+  //publish images for debugging
   bool debug_heatmap = true;
   if(debug_heatmap == true){ //rework this
     visualization_heatmap_publisher = create_publisher<suas24_interfaces::msg::VisualizationImgs>("/viz/heatmap", 10);
@@ -131,6 +105,35 @@ DetectionEstimator::DetectionEstimator()
       cv::getGaussianKernel(kernel_size + (1 - kernel_size % 2), 0, CV_32F);
 }
 
+void DetectionEstimator::debug_callback(suas24_interfaces::srv::Debug::Request::SharedPtr req, suas24_interfaces::srv::Debug::Response::SharedPtr res){
+    std_msgs::msg::String msg;
+    debug_string = "";
+    // for (const auto& detection : detection_points.at(req->index)){
+    //   debug_string += std::to_string(detection.confidence) + " ";
+    // }
+
+    float x_min = std::numeric_limits<float>::max();
+    float x_max = std::numeric_limits<float>::lowest();
+    float y_min = std::numeric_limits<float>::max();
+    float y_max = std::numeric_limits<float>::lowest();
+
+    for (auto detection : detection_points.at(2)) {
+      x_min = std::min(x_min, detection.x);
+      //x_min = -30;
+      x_max = std::max(x_max, detection.x);
+      //x_max = 30;
+      y_min = std::min(y_min, detection.y);
+      //y_min = -30;
+      y_max = std::max(y_max, detection.y);
+      //y_max = 30;
+    }
+    
+    debug_string = "x_min:" + std::to_string(x_min) + ", x_max:" + std::to_string(x_max) + ", y_min:" + std::to_string(y_min) + ", y_max:" + std::to_string(y_max); 
+
+    msg.data = debug_string;
+    res->response = msg;
+    RCLCPP_INFO(this->get_logger(), "DEBUG SERVICE");
+}
 
 void DetectionEstimator::visualization_callback(){
   
@@ -153,6 +156,7 @@ void DetectionEstimator::visualization_callback(){
   }
 }
 
+
 void DetectionEstimator::detections_callback(
     //vision_msgs::msg::Detection2DArray::ConstSharedPtr msg) {
     suas24_interfaces::msg::Classification::ConstSharedPtr msg){
@@ -167,7 +171,7 @@ void DetectionEstimator::detections_callback(
   float central_detection_deviation;
   std::vector<suas24_interfaces::msg::Classification::ConstSharedPtr> detections;
   detections.push_back(msg);
-  for (auto detection : detections/*msg->detections*/) { 
+  for (auto detection : detections/*msg->detections*/) { //HMMMMM
     geometry_msgs::msg::TransformStamped transform_drone_to_ground;
     geometry_msgs::msg::TransformStamped transform_ground_to_drone;
 
@@ -202,7 +206,8 @@ void DetectionEstimator::detections_callback(
     cameraVectorCV.z = 1.0f;
 
     geometry_msgs::msg::PointStamped cameraVector;
-    cameraVector.point.x = drone_z * cameraVectorCV.x;  // Stretch to correct distance
+    cameraVector.point.x =
+        drone_z * cameraVectorCV.x;  // Stretch to correct distance
     cameraVector.point.y = drone_z * cameraVectorCV.y;
     cameraVector.point.z = drone_z * cameraVectorCV.z;
     cameraVector.header.stamp = detection->header.stamp;
@@ -225,27 +230,13 @@ void DetectionEstimator::detections_callback(
       if (score < confidence_threshold) {
         continue;
       }
-      over_threshold = true; 
+      over_threshold = true;
 
       detection_points.at(i).push_back(
           {static_cast<float>(cameraVectorGround.point.x),
            static_cast<float>(cameraVectorGround.point.y),
            static_cast<float>(cameraVectorGround.point.z),
            static_cast<float>(score)});
-
-      // if (debug){
-      //   auto viz_array_msg = std_msgs::msg::Int32MultiArray();
-      //   std::vector<int> viz_vector {
-      //   i,
-      //   static_cast<int>(cameraVectorGround.point.x*10),
-      //   static_cast<int>(cameraVectorGround.point.y*10),
-      //   static_cast<int>(cameraVectorGround.point.z*10),
-      //   static_cast<int>(score*100),};
-      //   viz_array_msg.data = viz_vector;
-      //   visualization_points_publisher->publish(viz_array_msg);
-      //   RCLCPP_INFO(this->get_logger(), "BRUHMOMENT");
-      // }
-      
     }
 
     if (over_threshold) {
@@ -263,7 +254,6 @@ void DetectionEstimator::detections_callback(
                 cameraVectorGround.point.x, cameraVectorGround.point.y,
                 cameraVectorGround.point.z); //local ENU coords
   }
-
 
   // points_publisher->publish(central_detection.value());
   if (central_detection.has_value()) {
@@ -287,19 +277,17 @@ void DetectionEstimator::camera_info_callback(
                     std::placeholders::_1));
 }
 
-
-
 DropPointImage DetectionEstimator::get_drop_point_image(
     const int object_index) {
   //if (object_index >= standard_objects.size() + 1) {
     if (object_index >= 5) {
-      RCLCPP_ERROR(this->get_logger(), "Object index out of range");
-      return {
-          cv::Mat::zeros(1, 1, CV_32F),
-          0,
-          0,
-      };
-    }
+    RCLCPP_ERROR(this->get_logger(), "Object index out of range");
+    return {
+        cv::Mat::zeros(1, 1, CV_32F),
+        0,
+        0,
+    };
+  }
 
   const std::string object_id =
       //(object_index >= standard_objects.size())
@@ -326,28 +314,40 @@ DropPointImage DetectionEstimator::get_drop_point_image(
 
   for (auto detection : detection_points.at(object_index)) {
     x_min = std::min(x_min, detection.x);
+    //x_min = -30;
     x_max = std::max(x_max, detection.x);
+    //x_max = 30;
     y_min = std::min(y_min, detection.y);
+    //y_min = -30;
     y_max = std::max(y_max, detection.y);
+    //y_max = 30;
   }
+  //x_min:-6.709982, x_max:2.614120, y_min:9.370054, y_max:31.942196
+  
 
   int width = std::abs(std::ceil((x_max - x_min) / spatial_resolution));
   int height = std::abs(std::ceil((y_max - y_min) / spatial_resolution));
+  
+  if(debug){ //fix the image size to make it easier to visualize
+    width = 90;
+    height = 160;
+  }
+
 
   width = std::max(width, 1);
   height = std::max(height, 1);
 
   cv::Mat img = cv::Mat::zeros(height, width, CV_8UC1);
 
-  // RCLCPP_INFO(this->get_logger(), "Initializing matrix for %s: %i x %i",
-  //             object_id.c_str(), width, height);
+//   RCLCPP_INFO(this->get_logger(), "Initializing matrix for %s: %i x %i", 
+//               object_id.c_str(), width, height);
 
   for (const auto& detection : detection_points.at(object_index)) {
     const int x_img = (detection.x - x_min) / spatial_resolution;
     const int y_img = (detection.y - y_min) / spatial_resolution;
     //TODO check row col
-    img.at<float>(y_img, x_img) = 255; //y_img is rows, x_img is cols //TODO: Increment based off global_confidence instead of 255
-    //RCLCPP_INFO(this->get_logger(), "x, y: %s , %s", std::to_string(x_img).c_str(), std::to_string(y_img).c_str()); //checks out
+    RCLCPP_INFO(this->get_logger(), "CONF: %f", detection.confidence);
+    img.at<uint>(x_img, y_img) = 255;// * detection.confidence; //Scale white pixel by the confidence value
   }
 
   cv::Mat img_filtered(height, width, CV_32F);
@@ -357,17 +357,9 @@ DropPointImage DetectionEstimator::get_drop_point_image(
     save_debug_image(img_filtered, "droppoint_" + object_id + std::to_string(object_index) + ".png");
   }
 
-  //return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
-  return {img, static_cast<int>(x_min), static_cast<int>(y_min)}; //drop the gaussian filter for now
+  return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
 }
 
-
-
-
-
-/***************************************************************************************************************************************
-* Calculates the most probable location for each object based of their respective detection maps and returns this coordinate (local-enu)
-*/
 cv::Point3f DetectionEstimator::get_drop_point(const int object_index) {
 //   if (object_index >= standard_objects.size() + 1) {
     if (object_index >= 5) {
@@ -432,10 +424,6 @@ void DetectionEstimator::drop_points_callback(
   resp->success = success;
 }
 
-
-/**
-* Saves a heatmap image of the current detection map
-*/
 void DetectionEstimator::save_debug_image(cv::Mat image_f32,
                                           const std::string& name) {
   double min_val, max_val;
@@ -449,12 +437,7 @@ void DetectionEstimator::save_debug_image(cv::Mat image_f32,
 }
 
 
-
-
-
 //Refactor:
-
-
 sensor_msgs::msg::Image
 DetectionEstimator::cv_mat_to_ros(const cv::Mat& mat) {
     sensor_msgs::msg::Image ros_img;
@@ -480,3 +463,6 @@ DetectionEstimator::cv_mat_to_ros(const cv::Mat& mat) {
 
     return ros_img;
 }
+
+
+//suas24_interfaces.srv.Debug_Response(response=std_msgs.msg.String(data='x_min:-6.709982, x_max:2.614120, y_min:9.370054, y_max:31.942196'))
