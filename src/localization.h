@@ -58,6 +58,7 @@ class DetectionEstimator : public rclcpp::Node {
     
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr visualization_points_publisher;
   
+  int standard_objects_size;
 
   rclcpp::Publisher<suas24_interfaces::msg::VisualizationImgs>::SharedPtr visualization_heatmap_publisher;
   rclcpp::TimerBase::SharedPtr timer_;
