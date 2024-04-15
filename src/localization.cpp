@@ -65,7 +65,7 @@ DetectionEstimator::DetectionEstimator()
   this->get_parameter<std::string>("frame_ground", frame_ground); //for tf2 transforms
 
   //send drop points of objects
-  this->declare_parameter<std::string>("oserv_drop_points", "~/drop_points"); //drop point service name
+  this->declare_parameter<std::string>("oserv_drop_points", "perception/drop_points"); //drop point service name
   this->get_parameter<std::string>("oserv_drop_points", oserv_drop_points);
   drop_points_service = create_service<suas24_interfaces::srv::DropPointInfo>(
       oserv_drop_points,
@@ -93,14 +93,20 @@ DetectionEstimator::DetectionEstimator()
       std::bind(&DetectionEstimator::camera_info_callback, this,
                 std::placeholders::_1));
 
+  bool should_publish_json;
+  this->declare_parameter<bool>("publish_json_data", false);
+  this->get_parameter<bool>("publish_json_data", should_publish_json);
+
   debug = true;
 
   visualization_heatmap_publisher = create_publisher<suas24_interfaces::msg::VisualizationImgs>("/viz/heatmap", 10);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&DetectionEstimator::visualization_callback, this));
 
-  json_data_publisher = create_publisher<std_msgs::msg::String>("/viz/flythrough", 10);
-  tf_sub = create_subscription<tf2_msgs::msg::TFMessage>("/tf", 10, 
-    std::bind(&DetectionEstimator::publish_json_data, this, std::placeholders::_1));
+  if (should_publish_json) {
+    json_data_publisher = create_publisher<std_msgs::msg::String>("/viz/flythrough", 10);
+    tf_sub = create_subscription<tf2_msgs::msg::TFMessage>("/tf", 10, 
+      std::bind(&DetectionEstimator::publish_json_data, this, std::placeholders::_1));
+  }
 
   // The kernel size is an odd value corresponding to 5 meters on the ground
   const int kernel_size = std::round(5.0 / spatial_resolution);
@@ -529,7 +535,7 @@ void DetectionEstimator::drop_points_callback(
     suas24_interfaces::srv::DropPointInfo::Response::SharedPtr resp) {
   bool success = false;
 
-  std::array<geometry_msgs::msg::Point, 5> drop_points;
+  std::array<geometry_msgs::msg::PointStamped, 5> drop_points;
   std::array<int, 5> confidences;
 
   for (int i = 0; i < standard_objects_size/*standard_objects_size + 1*/; i++) {
@@ -539,9 +545,12 @@ void DetectionEstimator::drop_points_callback(
 
     const auto dropPoint = get_drop_point(i);
 
-    drop_points[i].x = dropPoint.x;
-    drop_points[i].y = dropPoint.y;
-    drop_points[i].z = 0;
+    drop_points[i].point.x = dropPoint.x;
+    drop_points[i].point.y = dropPoint.y;
+    drop_points[i].point.z = 25.0;
+
+    drop_points[i].header.stamp = now();
+    drop_points[i].header.frame_id = frame_ground;
 
     confidences[i] = dropPoint.z;
 
@@ -550,8 +559,8 @@ void DetectionEstimator::drop_points_callback(
                                       : "standard object"; //TODO get the correct object name
     
     if (i == 0)
-    RCLCPP_INFO(this->get_logger(), "Drop point for %s: %f, %f  (conf: %f)",
-                object_id.c_str(), dropPoint.x, dropPoint.y, dropPoint.z);
+        RCLCPP_INFO(this->get_logger(), "Drop point for %s: %f, %f  (conf: %f)",
+                    object_id.c_str(), dropPoint.x, dropPoint.y, dropPoint.z);
   }
 
   resp->drop_points = drop_points;
