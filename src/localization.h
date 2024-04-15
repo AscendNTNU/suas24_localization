@@ -100,6 +100,12 @@ class DetectionEstimator : public rclcpp::Node {
   std::unique_ptr<tf2_ros::Buffer> tf_buffer;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener;
 
+  bool m_gimbal_mode = 0;
+  float m_gimbal_pitch_offset = 0.0;
+  float m_gimbal_roll_offset = 0.0;
+
+  void apply_gimbal_correction(geometry_msgs::msg::TransformStamped& transform_drone_to_ground);
+
   // cvars
   std::string frame_camera, frame_ground;
   float confidence_threshold;
@@ -117,6 +123,8 @@ class DetectionEstimator : public rclcpp::Node {
 
 
   //debug shit
+  bool m_should_publish_json;
+  bool m_should_publish_heatmap;
   bool debug;
   std::string debug_string;
   rclcpp::Service<suas24_interfaces::srv::Debug>::SharedPtr debug_service; 
