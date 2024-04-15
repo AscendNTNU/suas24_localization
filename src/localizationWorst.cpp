@@ -12,13 +12,11 @@
 
 
 #include "localization.h"
-#include "fstream"
+
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <geometry_msgs/msg/detail/point_stamped__struct.hpp>
 #include <geometry_msgs/msg/detail/transform_stamped__struct.hpp>
-#include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/detail/image__struct.hpp>
 #include <std_msgs/msg/detail/string__struct.hpp>
 #include <string>
@@ -33,7 +31,6 @@
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
-#include <tf2_msgs/msg/detail/tf_message__struct.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 //#include <suas24_interfaces/msg/detail/classification__struct.hpp>
 #include <suas24_interfaces/msg/classification.hpp>
@@ -98,126 +95,10 @@ DetectionEstimator::DetectionEstimator()
   visualization_heatmap_publisher = create_publisher<suas24_interfaces::msg::VisualizationImgs>("/viz/heatmap", 10);
   timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&DetectionEstimator::visualization_callback, this));
 
-  json_data_publisher = create_publisher<std_msgs::msg::String>("/viz/flythrough", 10);
-  tf_sub = create_subscription<tf2_msgs::msg::TFMessage>("/tf", 10, 
-    std::bind(&DetectionEstimator::publish_json_data, this, std::placeholders::_1));
-
   // The kernel size is an odd value corresponding to 5 meters on the ground
   const int kernel_size = std::round(5.0 / spatial_resolution);
   kernel = cv::getGaussianKernel(kernel_size + (1 - kernel_size % 2), 0, CV_32F);
 }
-
-cv::Point2d rectifyPoint(const cv::Point2d& uv_raw, const cv::Matx33d& K, const cv::Mat_<double>& D, const cv::Matx33d& R, const cv::Matx34d& P) {
-    cv::Point2f raw32 = uv_raw, rect32;
-   const cv::Mat src_pt(1, 1, CV_32FC2, &raw32.x);
-   cv::Mat dst_pt(1, 1, CV_32FC2, &rect32.x);
-   cv::undistortPoints(src_pt, dst_pt, K, D, R, P);
-   return rect32;
-}
-
-std::vector<std::array<float, 4>> detections_buffer;
-
-constexpr float GIMBAL_ROLL = -0.05235988;
-constexpr float GIMBAL_PITCH = -0.087 / 2;
-
-void DetectionEstimator::publish_json_data(tf2_msgs::msg::TFMessage::SharedPtr msg) {
-  if (!camera_model.initialized())return;
-  geometry_msgs::msg::TransformStamped transform_drone_to_ground;
-  auto transform_time = msg->transforms.at(0).header.stamp;
-  try {
-    transform_drone_to_ground = tf_buffer->lookupTransform(
-        frame_ground, frame_camera, transform_time,
-        rclcpp::Duration::from_seconds(0.2));
-  } catch (tf2::TransformException& ex) {
-    RCLCPP_WARN(this->get_logger(), "Failure %s",
-                ex.what());  // Print exception which was caught
-    return;
-  }
-  tf2::Quaternion quat;
-  tf2::fromMsg(transform_drone_to_ground.transform.rotation, quat);
-  double roll, pitch, yaw;
-  tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-
-  // Create a new quaternion with roll and pitch set to zero, only preserving yaw
-  tf2::Quaternion newQuat;
-  newQuat.setRPY(GIMBAL_ROLL, M_PI + GIMBAL_PITCH, yaw);
-
-  double drone_x = transform_drone_to_ground.transform.translation.x;
-  double drone_y = transform_drone_to_ground.transform.translation.y;
-  double drone_z = transform_drone_to_ground.transform.translation.z;
-
-  std::stringstream stream;
-
-  stream << "{\"cam_corners\": [";
-
-
-
-  // Update the transform_drone_to_ground with the new rotation that ignores roll and pitch
-  transform_drone_to_ground.transform.rotation = tf2::toMsg(newQuat);
-  for (int y = 0; y < 3496; y += 3495) {
-    for (int x = 0; x < 4656; x += 4655) {
-        cv::Point3d cameraVectorCV; //replacement for segfaulting error in projectPixelTo3dRay
-        auto uv_rect = rectifyPoint(cv::Point2d(x, y), 
-          camera_model.intrinsicMatrix(), 
-          camera_model.distortionCoeffs(), 
-          camera_model.rotationMatrix(), 
-          camera_model.projectionMatrix());
-
-
-        cameraVectorCV.x = (float)(uv_rect.x - camera_model.cx()) / camera_model.fx() / 1.0;
-        cameraVectorCV.y = (float)(uv_rect.y - camera_model.cy()) / camera_model.fy() / 1.0;
-        cameraVectorCV.z = 1.0f;
-
-        geometry_msgs::msg::PointStamped cameraVector;
-        cameraVector.point.x = drone_z * cameraVectorCV.x;  // Stretch to correct distance
-        cameraVector.point.y = drone_z * cameraVectorCV.y;
-        cameraVector.point.z = drone_z * cameraVectorCV.z;
-        cameraVector.header.stamp = transform_time;
-        cameraVector.header.frame_id = frame_camera;
-
-        geometry_msgs::msg::PointStamped cameraVectorGround;
-
-        // Transfer from camera frame to body frame
-        tf2::doTransform(cameraVector, cameraVectorGround,
-                          transform_drone_to_ground);
-        
-        double local_e = cameraVectorGround.point.x;
-        double local_n = cameraVectorGround.point.y;
-        double local_u = cameraVectorGround.point.z;
-
-
-
-        if (x+y != 0)stream << ",";
-        stream << "[";
-        
-        stream << local_e << ", " << local_n << ", " << local_u << "]";
-    }
-  }
-  stream << "], \"drone_pos\": [" << drone_x << ", " << drone_y << "]";
-
-  if (detections_buffer.size()) {
-    stream << ", \"detections\": [";
-
-    for (int i = 0; i < detections_buffer.size(); ++i) {
-      if (i > 0)stream << ", ";
-      stream << "[";
-
-      for (int j = 0; j < 4; ++j) {
-        if (j > 0)stream << ", ";
-        stream << detections_buffer[i][j];
-      }
-      stream << "]";
-    }
-    stream << "]";
-    detections_buffer.clear();
-  }
-
-  stream << "}";
-  std_msgs::msg::String pub_msg;
-  pub_msg.data = stream.str();
-  json_data_publisher->publish(pub_msg);
-}
-
 
 
 /*
@@ -228,6 +109,7 @@ void DetectionEstimator::detections_callback(
 
   std::optional<geometry_msgs::msg::PointStamped> central_detection;
   float central_detection_deviation;
+  RCLCPP_INFO(this->get_logger(), "RCL1"); 
 
   geometry_msgs::msg::TransformStamped transform_drone_to_ground;
   geometry_msgs::msg::TransformStamped transform_ground_to_drone;
@@ -235,35 +117,17 @@ void DetectionEstimator::detections_callback(
   try {
     transform_drone_to_ground = tf_buffer->lookupTransform(
         frame_ground, frame_camera, detection_msg->header.stamp,
-        rclcpp::Duration::from_seconds(0));
+        rclcpp::Duration::from_seconds(1));
     transform_ground_to_drone = tf_buffer->lookupTransform(
         frame_camera, frame_ground, detection_msg->header.stamp,
-        rclcpp::Duration::from_seconds(0));
+        rclcpp::Duration::from_seconds(1));
   } catch (tf2::TransformException& ex) {
     RCLCPP_WARN(this->get_logger(), "Failure %s",
                 ex.what());  // Print exception which was caught
     return;
   }
 
-  // This is code for ignoring pitch and roll
-  // if we assume the gimbal makes the camera point perfectly downward
-
-  // NB: Will make tf_static redundant, so it has to be set here in newQuat basically
-
-  
-  tf2::Quaternion quat;
-  tf2::fromMsg(transform_drone_to_ground.transform.rotation, quat);
-  double roll, pitch, yaw;
-  tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-
-  // Create a new quaternion with roll and pitch set to zero, only preserving yaw
-  tf2::Quaternion newQuat;
-  newQuat.setRPY(GIMBAL_ROLL, M_PI + GIMBAL_PITCH, yaw);
-
-  // Update the transform_drone_to_ground with the new rotation that ignores roll and pitch
-  transform_drone_to_ground.transform.rotation = tf2::toMsg(newQuat);
-  
-
+  RCLCPP_INFO(this->get_logger(), "RCL2");
   int x_cam = detection_msg->center_x;
   int y_cam = detection_msg->center_y; 
 
@@ -271,58 +135,10 @@ void DetectionEstimator::detections_callback(
   double drone_y = transform_drone_to_ground.transform.translation.y;
   double drone_z = transform_drone_to_ground.transform.translation.z;
 
-  /* This code projects the corner of the image down to the ground, prints the projected corners to stdout and halts with exit code 1.
-     Useful for visualization. The code we use today makes the projected rectangle about 30 x 50 METERS (totally wrong)
-
-     The rectangle is semi-ait if we divide x and y by 10 before the transform, but this is just a weird heuristic. */
-
-/*
-  for (int y = 0; y < 3496; y += 3495) {
-    for (int x = 0; x < 4656; x += 4655) {
-        cv::Point3d cameraVectorCV; //replacement for segfaulting error in projectPixelTo3dRay
-
-        cameraVectorCV.x = (float)(x - camera_model.cx()) / camera_model.fx() / 1.0;
-        cameraVectorCV.y = (float)(y - camera_model.cy()) / camera_model.fy() / 1.0;
-        cameraVectorCV.z = 1.0f;
-
-        geometry_msgs::msg::PointStamped cameraVector;
-        cameraVector.point.x = drone_z * cameraVectorCV.x;  // Stretch to correct distance
-        cameraVector.point.y = drone_z * cameraVectorCV.y;
-        cameraVector.point.z = drone_z * cameraVectorCV.z;
-        cameraVector.header.stamp = detection_msg->header.stamp;
-        cameraVector.header.frame_id = frame_camera;
-
-        geometry_msgs::msg::PointStamped cameraVectorGround;
-
-        // Transfer from camera frame to body frame
-        tf2::doTransform(cameraVector, cameraVectorGround,
-                          transform_drone_to_ground);
-        
-        double local_e = cameraVectorGround.point.x;
-        double local_n = cameraVectorGround.point.y;
-        double local_u = cameraVectorGround.point.z;
-
-        std::cout << "(" << local_e << ", " << local_n << ", " << local_u << ") ";
-    }
-    std::cout << std::endl;
-  }
-
-  exit(1);
-  */
-
-
   //auto cameraVectorCV = camera_model.projectPixelTo3dRay(cv::Point2d(x_cam, y_cam));
   cv::Point3d cameraVectorCV; //replacement for segfaulting error in projectPixelTo3dRay
-
-  // Unsure if we need rectification???
-  auto uv_rect = rectifyPoint(cv::Point2d(x_cam, y_cam), 
-    camera_model.intrinsicMatrix(), 
-    camera_model.distortionCoeffs(), 
-    camera_model.rotationMatrix(), 
-    camera_model.projectionMatrix());
-
-  cameraVectorCV.x = (uv_rect.x - camera_model.cx() - camera_model.Tx()) / camera_model.fx(); // / 10.0;
-  cameraVectorCV.y = (uv_rect.y - camera_model.cy() - camera_model.Ty()) / camera_model.fy(); // / 10.0;
+  cameraVectorCV.x = (x_cam - camera_model.cx() -camera_model.Tx()) / camera_model.fx();
+  cameraVectorCV.y = (y_cam - camera_model.cy() -camera_model.Ty()) / camera_model.fy();
   cameraVectorCV.z = 1.0f;
 
   geometry_msgs::msg::PointStamped cameraVector;
@@ -332,23 +148,17 @@ void DetectionEstimator::detections_callback(
   cameraVector.header.stamp = detection_msg->header.stamp;
   cameraVector.header.frame_id = frame_camera;
 
+  RCLCPP_INFO(this->get_logger(), "RCL3");
+
   geometry_msgs::msg::PointStamped cameraVectorGround;
-
-// Now apply this new transform
-
 
   // Transfer from camera frame to body frame
   tf2::doTransform(cameraVector, cameraVectorGround,
                     transform_drone_to_ground);
 
-  detections_buffer.push_back({
-    (float)cameraVectorGround.point.x, 
-    (float)cameraVectorGround.point.y, 
-    (float)drone_x, 
-    (float)drone_y
-  });
-
   // Save the current detection in each of the standard object indecies along with the confidence
+  RCLCPP_INFO(this->get_logger(), "RCL4");
+  
   bool over_threshold = false; 
   for (int i = 0; i < standard_objects_size; i++) {
     const float score = detection_msg->confidence[i].conf_global;
@@ -360,15 +170,10 @@ void DetectionEstimator::detections_callback(
     detection_points.at(i).push_back(
         {static_cast<float>(cameraVectorGround.point.x),
           static_cast<float>(cameraVectorGround.point.y),
-          static_cast<float>(std::hypot(cameraVectorGround.point.x - drone_x, cameraVectorGround.point.y - drone_y)),
+          static_cast<float>(cameraVectorGround.point.z),
           static_cast<float>(score)});
-    detection_points.at(i).push_back(
-      {static_cast<float>(drone_x),
-          static_cast<float>(drone_y),
-          static_cast<float>(-1),
-          static_cast<float>(score)}
-    );
   }
+  RCLCPP_INFO(this->get_logger(), "RCL5");
 
   if (over_threshold) {
     const float deviation =
@@ -380,37 +185,11 @@ void DetectionEstimator::detections_callback(
       central_detection_deviation = deviation;
     }
   }
+  RCLCPP_INFO(this->get_logger(), "RCL6");
 
   RCLCPP_INFO(this->get_logger(), "DROP LOCATION: x: %f, y: %f, z: %f",
               cameraVectorGround.point.x, cameraVectorGround.point.y,
               cameraVectorGround.point.z);
-
-  //////////////////////////////////////////////////////
-  std::ofstream outFile("coordinates.txt", std::ios::out);
-  
-  // Check if the file was successfully opened
-  if (!outFile.is_open()) {
-    RCLCPP_ERROR(this->get_logger(), "Failed to open file for writing.");
-    return;
-  }
-
-  RCLCPP_INFO(this->get_logger(), "COORDINATES");
-  for (int i = 0; i < detection_points.at(0).size(); i++) {
-    // Convert x and y to string
-    std::string xx = std::to_string(detection_points.at(0).at(i).x);
-    std::string yy = std::to_string(detection_points.at(0).at(i).y);
-    std::string zz = std::to_string(detection_points.at(0).at(i).z);
-    
-    // Log to console
-    RCLCPP_INFO(this->get_logger(), "Coord x, y: %s %s", xx.c_str(), yy.c_str());
-    
-    // Write to file
-    outFile << "Coord x, y: " << xx << " " << yy << " " << zz << "\n";
-  }
-  
-  // Close the file after writing
-  outFile.close();
-  ///////////////////////////////////////////////////////
 
   if (central_detection.has_value()) {
     points_publisher->publish(central_detection.value());
@@ -532,7 +311,7 @@ void DetectionEstimator::drop_points_callback(
   std::array<geometry_msgs::msg::Point, 5> drop_points;
   std::array<int, 5> confidences;
 
-  for (int i = 0; i < standard_objects_size/*standard_objects_size + 1*/; i++) {
+  for (int i = 0; i < standard_objects_size + 1; i++) {
     if (!success && !detection_points.at(i).empty()) {
       success = true;
     }
@@ -548,8 +327,6 @@ void DetectionEstimator::drop_points_callback(
     const std::string object_id = (i >= standard_objects_size)
                                       ? "emergent"
                                       : "standard object"; //TODO get the correct object name
-    
-    if (i == 0)
     RCLCPP_INFO(this->get_logger(), "Drop point for %s: %f, %f  (conf: %f)",
                 object_id.c_str(), dropPoint.x, dropPoint.y, dropPoint.z);
   }
@@ -631,5 +408,3 @@ DetectionEstimator::cv_mat_to_ros(const cv::Mat& mat_f32) {
 
     return ros_img;
 }
-
-

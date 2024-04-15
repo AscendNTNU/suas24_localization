@@ -2,6 +2,7 @@
 #include <map>
 #include <memory>
 #include <opencv2/core/mat.hpp>
+#include <rclcpp/publisher.hpp>
 #include <rclcpp/service.hpp>
 #include <rclcpp/timer.hpp>
 #include <sensor_msgs/msg/detail/image__struct.hpp>
@@ -9,6 +10,7 @@
 #include <string>
 #include <suas24_interfaces/msg/detail/visualization_imgs__struct.hpp>
 #include <suas24_interfaces/srv/detail/debug__struct.hpp>
+#include <tf2_msgs/msg/detail/tf_message__struct.hpp>
 #include <vector>
 
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -57,12 +59,18 @@ class DetectionEstimator : public rclcpp::Node {
       points_publisher;
     
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr visualization_points_publisher;
+
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr json_data_publisher;
+  rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr tf_sub;
   
   int standard_objects_size;
 
   rclcpp::Publisher<suas24_interfaces::msg::VisualizationImgs>::SharedPtr visualization_heatmap_publisher;
   rclcpp::TimerBase::SharedPtr timer_;
   void visualization_callback();
+
+  void publish_json_data(tf2_msgs::msg::TFMessage::SharedPtr msg);
+  rclcpp::TimerBase::SharedPtr json_timer;
 
   // Subscribers
   std::string itopic_classifications, itopic_camera_info;
