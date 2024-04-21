@@ -428,14 +428,14 @@ DropPointImage DetectionEstimator::get_drop_point_image(const int object_index) 
     const int x_img = (detection.x - x_min) / spatial_resolution;
     const int y_img = (detection.y - y_min) / spatial_resolution;
 
-    img.at<float>(y_img, x_img) += 255;
+    img.at<float>(y_img, x_img) += detection.confidence;
   }
 
   cv::Mat img_filtered(height, width, CV_32F);
   cv::sepFilter2D(img, img_filtered, -1, kernel, kernel);
 
   if (debug) {
-    save_debug_image(img_filtered, "droppoint_" + object_id + ".png");
+    save_debug_image(img_filtered, "droppoint_v2_" + object_id + ".png");
   }
 
   return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
@@ -523,6 +523,7 @@ void DetectionEstimator::visualization_callback(){
 
       sensor_msgs::msg::Image sensor_img = cv_mat_to_ros(img);
       imgs.push_back(sensor_img); 
+      // break; for duplicates
     }
 
     viz_msg.images = imgs;
