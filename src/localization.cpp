@@ -330,10 +330,12 @@ void DetectionEstimator::detections_callback(
   bool over_threshold = false; 
   for (int i = 0; i < standard_objects_size; i++) {
     const float score = detection_msg->confidence[i].conf_global;
+    RCLCPP_INFO(this->get_logger(), "DETECTION %d, score: %f", i, score);
     if (score < confidence_threshold) {
       continue;
     }
     over_threshold = true;
+
 
     detection_points.at(i).push_back(
         {static_cast<float>(cameraVectorGround.point.x),
@@ -353,7 +355,7 @@ void DetectionEstimator::detections_callback(
     }
   }
 
-  RCLCPP_INFO(this->get_logger(), "DROP LOCATION: x: %f, y: %f, z: %f",
+  RCLCPP_INFO(this->get_logger(), "DROP LOCATION: x: %f, y: %f, z: %f, score: ",
               cameraVectorGround.point.x, cameraVectorGround.point.y,
               cameraVectorGround.point.z);
 
@@ -435,7 +437,7 @@ DropPointImage DetectionEstimator::get_drop_point_image(const int object_index) 
   cv::sepFilter2D(img, img_filtered, -1, kernel, kernel);
 
   if (debug) {
-    save_debug_image(img_filtered, "droppoint_v2_" + object_id + ".png");
+    save_debug_image(img_filtered, "droppoint_v3_" + object_id + ".png");
   }
 
   return {img_filtered, static_cast<int>(x_min), static_cast<int>(y_min)};
@@ -488,6 +490,8 @@ void DetectionEstimator::drop_points_callback(
 
     drop_points[i].header.stamp = now();
     drop_points[i].header.frame_id = frame_ground;
+
+    RCLCPP_INFO(this->get_logger(), "GIVING DROP LOCATION OBJECT %d: %f %f", i, dropPoint.x, dropPoint.y);
 
   }
 

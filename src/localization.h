@@ -108,7 +108,7 @@ class DetectionEstimator : public rclcpp::Node {
 
   // cvars
   std::string frame_camera, frame_ground;
-  float confidence_threshold;
+  float confidence_threshold = 0.0;
   float spatial_resolution;
 
   // Filtering
