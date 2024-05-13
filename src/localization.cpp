@@ -107,6 +107,20 @@ DetectionEstimator::DetectionEstimator()
   this->declare_parameter<float>("gimbal_roll_offset", 0.0);
   this->get_parameter<float>("gimbal_roll_offset", m_gimbal_roll_offset);
 
+  this->declare_parameter<bool>("use_drone_pos", false);
+  this->get_parameter<bool>("use_drone_pos", m_use_drone_pos);
+
+  if (m_use_drone_pos) {
+    RCLCPP_INFO(this->get_logger(), "Configured for using drone position as an approximation for drop locations.");
+  }
+
+  this->declare_parameter<bool>("select_distinct_points", false);
+  this->get_parameter<bool>("select_distinct_points", m_select_distinct_points);
+
+  if (m_select_distinct_points) {
+    RCLCPP_INFO(this->get_logger(), "Configured for trying to select distinct drop locations.");
+  }
+
   if (m_gimbal_mode) {
     RCLCPP_INFO(this->get_logger(), "Configured with gimbal mode");
     RCLCPP_INFO(this->get_logger(), 
@@ -317,10 +331,21 @@ void DetectionEstimator::detections_callback(
   tf2::doTransform(cameraVector, cameraVectorGround,
                     transform_drone_to_ground);
 
+  
+  float detection_enu_x = cameraVectorGround.point.x;
+  float detection_enu_y = cameraVectorGround.point.y;
+  float detection_enu_z = cameraVectorGround.point.z;
+
+  if (m_use_drone_pos) {
+    detection_enu_x = drone_x;
+    detection_enu_y = drone_y;
+    detection_enu_z = 0;
+  }
+
   if (m_should_publish_json) {
       detections_buffer.push_back({
-        (float)cameraVectorGround.point.x, 
-        (float)cameraVectorGround.point.y, 
+        (float)detection_enu_x, 
+        (float)detection_enu_y, 
         (float)drone_x, 
         (float)drone_y
       });
@@ -338,9 +363,9 @@ void DetectionEstimator::detections_callback(
 
 
     detection_points.at(i).push_back(
-        {static_cast<float>(cameraVectorGround.point.x),
-          static_cast<float>(cameraVectorGround.point.y),
-          static_cast<float>(cameraVectorGround.point.z),
+        {static_cast<float> (detection_enu_x),
+          static_cast<float>(detection_enu_y),
+          static_cast<float>(detection_enu_z),
           static_cast<float>(score)});
   }
 
@@ -470,6 +495,54 @@ cv::Point3f DetectionEstimator::get_drop_point(const int object_index) {
   return {x, y, static_cast<float>(max_val)};
 }
 
+
+std::array<geometry_msgs::msg::PointStamped, 5> DetectionEstimator::get_distinct_drop_points() {
+  std::array<geometry_msgs::msg::PointStamped, 5> drop_points;
+
+  std::set<int> available = {0, 1, 2, 3, 4};
+
+  while (!available.empty()) {
+    cv::Point3f max_point;
+    int max_idx = -1;
+
+    for (auto obj_idx : available) {
+      // Among remaining objects, find the max peak *globally*
+      const auto drop_point = get_drop_point(obj_idx);
+      if (max_idx == -1 || drop_point.z > max_point.z) { // z-coordinate is score
+        max_point = drop_point;
+        max_idx = obj_idx;
+      }
+    }
+
+    drop_points.at(max_idx).point.x = max_point.x;
+    drop_points.at(max_idx).point.y = max_point.y;
+    drop_points.at(max_idx).point.z = 25.0;
+    drop_points.at(max_idx).header.stamp = now();
+    drop_points.at(max_idx).header.frame_id = frame_ground;
+
+    available.erase(max_idx);
+
+    // Add fake detections to remaining with negative confidence
+    for (auto obj_idx : available) {
+      if (detection_points.at(obj_idx).empty())continue; // This case is handled later, so we don't want to introduce a new point here
+
+
+      for (float x = max_point.x - 10; x <= max_point.x + 10; x += 5) {
+        for (float y = max_point.y - 10; y <= max_point.y + 10; y += 5) {
+          detection_points.at(obj_idx).push_back({
+              x,
+              y,
+              0, //z
+              -100.0f,
+          });
+        }
+      }
+    }
+  }
+
+  return drop_points;
+}
+
 void DetectionEstimator::drop_points_callback(
     suas24_interfaces::srv::DropPointInfo::Request::SharedPtr req,
     suas24_interfaces::srv::DropPointInfo::Response::SharedPtr resp) {
@@ -477,24 +550,29 @@ void DetectionEstimator::drop_points_callback(
 
   std::array<geometry_msgs::msg::PointStamped, 5> drop_points;
 
-  for (int i = 0; i < standard_objects_size/*standard_objects_size + 1*/; i++) {
-    if (!success && !detection_points.at(i).empty()) {
-      success = true;
+  if (m_select_distinct_points) {
+    drop_points = get_distinct_drop_points();
+  } else {
+    for (int i = 0; i < standard_objects_size/*standard_objects_size + 1*/; i++) {
+      if (!success && !detection_points.at(i).empty()) {
+        success = true;
+      }
+
+      const auto dropPoint = get_drop_point(i);
+
+      drop_points[i].point.x = dropPoint.x;
+      drop_points[i].point.y = dropPoint.y;
+      drop_points[i].point.z = 25.0;
+
+      drop_points[i].header.stamp = now();
+      drop_points[i].header.frame_id = frame_ground;
+
     }
-
-    const auto dropPoint = get_drop_point(i);
-
-    drop_points[i].point.x = dropPoint.x;
-    drop_points[i].point.y = dropPoint.y;
-    drop_points[i].point.z = 25.0;
-
-    drop_points[i].header.stamp = now();
-    drop_points[i].header.frame_id = frame_ground;
-
-    RCLCPP_INFO(this->get_logger(), "GIVING DROP LOCATION OBJECT %d: %f %f", i, dropPoint.x, dropPoint.y);
-
   }
 
+  for (int i = 0; i < 5; ++i) {
+    RCLCPP_INFO(this->get_logger(), "GIVING DROP LOCATION OBJECT %d: %f %f", i, drop_points[i].point.x, drop_points[i].point.y);
+  }
   resp->drop_points = drop_points;
   resp->success = success;
 }
@@ -503,6 +581,7 @@ void DetectionEstimator::save_debug_image(cv::Mat image_f32,
                                           const std::string& name) {
   double min_val, max_val;
   cv::minMaxLoc(image_f32, &min_val, &max_val);
+
 
   cv::Mat image_u8;
   image_f32.convertTo(image_u8, CV_8U, 255.0 / (max_val - min_val),

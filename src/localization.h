@@ -96,6 +96,8 @@ class DetectionEstimator : public rclcpp::Node {
       suas24_interfaces::srv::DropPointInfo::Request::SharedPtr req,
       suas24_interfaces::srv::DropPointInfo::Response::SharedPtr resp);
 
+  std::array<geometry_msgs::msg::PointStamped, 5> get_distinct_drop_points();
+
   // TF2
   std::unique_ptr<tf2_ros::Buffer> tf_buffer;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener;
@@ -110,6 +112,9 @@ class DetectionEstimator : public rclcpp::Node {
   std::string frame_camera, frame_ground;
   float confidence_threshold = 0.0;
   float spatial_resolution;
+  bool m_use_drone_pos;
+
+  bool m_select_distinct_points;
 
   // Filtering
   cv::Mat kernel;
