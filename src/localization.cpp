@@ -415,7 +415,7 @@ DropPointImage DetectionEstimator::get_drop_point_image(const int object_index) 
   const std::string object_id =
       (object_index >= standard_objects_size)
           ? "emergent"
-          : "standard_object"; //TODO: get actual specific object name indexed by object_index
+          : "standard_object_" + std::to_string(object_index); //TODO: get actual specific object name indexed by object_index
 
   if (detection_points.at(object_index).empty()) {
     RCLCPP_ERROR(this->get_logger(), "No detections for object: %s",
@@ -523,21 +523,21 @@ std::array<geometry_msgs::msg::PointStamped, 5> DetectionEstimator::get_distinct
     available.erase(max_idx);
 
     // Add fake detections to remaining with negative confidence
-    for (auto obj_idx : available) {
-      if (detection_points.at(obj_idx).empty())continue; // This case is handled later, so we don't want to introduce a new point here
+    //for (auto obj_idx : available) {
+    //  if (detection_points.at(obj_idx).empty())continue; // This case is handled later, so we don't want to introduce a new point here
 
 
-      for (float x = max_point.x - 10; x <= max_point.x + 10; x += 5) {
-        for (float y = max_point.y - 10; y <= max_point.y + 10; y += 5) {
-          detection_points.at(obj_idx).push_back({
-              x,
-              y,
-              0, //z
-              -100.0f,
-          });
-        }
-      }
-    }
+    //  for (float x = max_point.x - 10; x <= max_point.x + 10; x += 5) {
+    //    for (float y = max_point.y - 10; y <= max_point.y + 10; y += 5) {
+    //      detection_points.at(obj_idx).push_back({
+    //          x,
+    //          y,
+    //          0, //z
+    //          -100.0f,
+    //      });
+    //    }
+    //  }
+    //}
   }
 
   return drop_points;
